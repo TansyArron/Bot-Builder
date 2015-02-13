@@ -5,20 +5,31 @@ import random
 import os
 
 class bot():
-    def __init__(self, ZULIP_USERNAME, ZULIP_API_KEY, response_string):
-        self.username = ZULIP_USERNAME
-        self.api_key = ZULIP_API_KEY
-        self.key_word = response_string.upper().split()
-        self.client = zulip.Client(ZULIP_USERNAME, ZULIP_API_KEY)
-        self.streams = self.get_zulip_streams()
+    def __init__(self, zulip_username, zulip_api_key, key_word, search_string, caption='', subscribed_streams=[]):
+        self.username = zulip_username
+        self.api_key = zulip_api_key
+        self.key_word = key_word.lower()
+        self.subscribed_streams = subscribed_streams
+        self.search_string = search_string.lower()
+        self.caption = caption
+        self.client = zulip.Client(zulip_username, zulip_api_key)
         self.subscriptions = self.subscribe_to_streams()
 
-    # call Zulip API to get list of all streams
-    def get_zulip_streams(self):
-        response = requests.get(
-            'https://api.zulip.com/v1/streams',
-            auth=requests.auth.HTTPBasicAuth(self.username, self.api_key)
-        )
+
+    @property
+    def streams(self):
+        if not self.subscribed_streams:
+            streams = [{'name': stream['name']} for stream in self.get_all_zulip_streams()]
+            return streams
+        else: 
+            streams = [{'name': stream} for stream in self.subscribed_streams]
+            return streams
+
+
+    def get_all_zulip_streams(self):
+        ''' Call Zulip API to get a list of all streams
+        '''
+        response = requests.get('https://api.zulip.com/v1/streams', auth=(self.username, self.api_key))
         if response.status_code == 200:
             return response.json()['streams']
         elif response.status_code == 401:
@@ -27,56 +38,53 @@ class bot():
             raise RuntimeError(':( we failed to GET streams.\n(%s)' % response)
 
 
-    # subscribe the bot to all streams
     def subscribe_to_streams(self):
-        streams = [
-                {'name': stream['name']}
-                for stream in self.streams
-            ]
-        self.client.add_subscriptions(streams)
+        self.client.add_subscriptions(self.streams)
 
 
-    # call respond function when client mentions "Hopper"
     def respond(self, msg):
-        print "so far, so good"
-        # Make sure the bot never responds to itself or it results in infinite loop
-        if msg['sender_email'] != "schwartz-bot@students.hackerschool.com":
-            content = msg['content'].upper()
-            print content
-            print self.key_word
-            # bot sends message when word self.key_word appears 
-            for word in self.key_word:
-                    if word in content:
-                        print "YES!"
-                        giphy_response = requests.get('http://api.giphy.com/v1/gifs/random?tag=arnold+predator&api_key=dc6zaTOxFJmzC').json()
-                        img_url = giphy_response['data']['fixed_width_downsampled_url']
-                        if msg['type'] == 'stream':
-                            self.client.send_message({
-                                "type": "stream",
-                                "subject": msg["subject"],
-                                "to": msg['display_recipient'],
-                                "content": "GET TO THE HOPPAAAAA!!!! \n %s" % img_url
-                                })
+        content = msg['content'].lower()
+        if self.key_word in content:
+            img_url = self.get_giphy_response()
+            self.send_message(msg, img_url) 
+               
+
+    def send_message(self, msg, img_url):
+        self.client.send_message({
+            "type": "stream",
+            "subject": msg["subject"],
+            "to": msg['display_recipient'],
+            "content": '{}\n{}'.format(self.caption, img_url)
+            })
+
+
+    def get_giphy_response(self):
+        response = requests.get('http://api.giphy.com/v1/gifs/random', params=self.get_params())
+        if response.status_code == 200:
+            return response.json()['data']['fixed_width_downsampled_url']
+        else:
+            raise RuntimeError(':( we failed to GET giphy.\n{}'.format(response.json()))
+
 
     def get_params(self):
-        query = self.normalize_query()
-        print query
         params = {
             'api_key': 'dc6zaTOxFJmzC',
-            'tag': query
+            'tag': self.search_string
         }
-                
+        return params
 
-    # accept the content of msg split into array
-    def normalize_query(self):
-        query = '+'.join(self.key_word)
-        return query.lower()
 
     def main(self):
         self.client.call_on_each_message(lambda msg: self.respond(msg))
 
 
-# This is a blocking call that will run forever
-# client.call_on_each_message(lambda msg: respond(msg))
-schwartz = bot('schwarzenegger-bot@students.hackerschool.com', 'rPO44O49qB4uPWACArd5u6tbzY42adLM', 'Hopper')
-schwartz.main()
+
+zulip_username = 'schwarzenegger-bot@students.hackerschool.com'
+zulip_api_key = 'rPO44O49qB4uPWACArd5u6tbzY42adLM'
+key_word = 'in hopper' # Text in Zulip the bot should respond to
+search_string = 'get to the choppa' # bot will search giphy using these terms 
+caption = 'GET TO THE HOPPAAAA!!!'# Enter text here if you want a caption above the gif. Defaults to ''
+subscribed_streams = ['455 Broadway', 'bot-test', 'social'] # List of streams the bot should be active in. Defaults to ALL
+
+new_bot = bot(zulip_username, zulip_api_key, key_word , search_string, caption, subscribed_streams)
+new_bot.main()
